@@ -26,7 +26,6 @@ def remove_transparency(im, bg_colour=(255, 255, 255)):
         bg = Image.new("RGBA", im.size, bg_colour + (255,))
         bg.paste(im, mask=alpha)
         return bg
-
     else:
         return im
 
@@ -38,7 +37,19 @@ def combine_pdf(img_paths:List[str],output_filename:str,output_dir:str,fullpath:
     pdf_merger = PyPDF2.PdfMerger()
     for (index, img_path) in enumerate(img_paths):
         image = remove_transparency(Image.open(img_path))
-        pdf_bytes = img2pdf.convert(image.filename)
+        #Invalid rotate value will be judged 
+        rotated = False
+        img_exif = image.getexif()
+        img_exif.items()
+        if img_exif is not None:
+            for key, val in img_exif.items():
+                if key == 0x0112:
+                    rotated=True
+                    break
+        if rotated==False:
+            pdf_bytes = img2pdf.convert(image.filename)
+        else:
+            pdf_bytes = img2pdf.convert(image.filename,rotation=img2pdf.Rotation.ifvalid)
         file = open(f"./avif_temp_pdf_{UUID}.pdf", "wb")
         file.write(pdf_bytes)
         try:
@@ -53,8 +64,8 @@ def combine_pdf(img_paths:List[str],output_filename:str,output_dir:str,fullpath:
             os.remove(img_path)
     destination:List[str] = fullpath.replace(f"./{TARGETDIR}","").split("\\")
     zipfilename = None
-    if destination.__len__()>1:
-        zipfilename = destination[1]
+    if destination.__len__()>=2:
+        zipfilename = destination[-2]
         if os.path.exists("./"+OUTPUTDIR+"/"+zipfilename) is False:
             os.makedirs("./"+OUTPUTDIR+"/"+zipfilename)
         path = "./"+OUTPUTDIR+"/"+zipfilename+"/"+output_filename+"$$"+(uuid.uuid4()).__str__().replace("-","",-1)+".pdf"
@@ -111,18 +122,27 @@ def _extract(base_dir,iter):
     (root, dirs, files) = iter
     for file in files:
         file_path = os.path.join(root, file)
-        if file.endswith('.zip') or file.endswith('.cbz') :
+        if file.endswith('.zip') or file.endswith('.cbz') or file.endswith('.rar'):
             print("extracting:",file_path)
-            path = f"./{TARGETDIR}/"+file.split(".")[0]
+            files_names:List[str] = file.split(".")
+            if files_names.__len__()<=2:
+                path = f"./{TARGETDIR}/"+file.split(".")[0].replace(".","")
+            else:
+                max_length_name = None
+                for _name in files_names:
+                    if max_length_name is None or _name.__len__()>max_length_name.__len__():
+                        max_length_name = _name
+                path = f"./{TARGETDIR}/"+max_length_name.replace(".","")
+            path = path.strip()
             if os.path.exists(path)==False:
-                os.makedirs(path)
-            extract_zip(file_path, path)
-        elif file.endswith('.rar'):
-            print("extracting:",file_path)
-            path = f"./{TARGETDIR}/"+file.split(".")[0]
-            if os.path.exists(path)==False:
-                os.makedirs(path)
-            extract_rar(file_path, path)
+                try:
+                    os.makedirs(path)
+                except Exception as e:
+                    print("can not mkdirs: ",path, " becasue :",e)
+            if file.endswith('.zip') or file.endswith('.cbz') :
+                extract_zip(file_path, path)
+            elif file.endswith('.rar'):
+                extract_rar(file_path, path)
         if base_dir=="./__temp":
             os.remove(file_path)
 
