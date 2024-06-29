@@ -3,3 +3,4 @@ img2pdf
 pillow
 pillow-avif-plugin
 PyPDF2
+tqdm

@@ -13,6 +13,7 @@ import PyPDF2
 import uuid
 import argparse
 import sys
+from tqdm import tqdm
 
 BOOKS = []
 EXISTED_PATH = []#becasue when multi-processing, the file may not saved to OUTPUTDIR, so there it may be use the same path.
@@ -25,9 +26,11 @@ def remove_transparency(im, bg_colour=(255, 255, 255)):
         alpha = im.convert('RGBA').split()[-1]
         bg = Image.new("RGBA", im.size, bg_colour + (255,))
         bg.paste(im, mask=alpha)
-        return bg
+        name= f"./temp$_${uuid.uuid4()}.png"
+        bg.save(name,format='PNG')
+        return (1,im,name)
     else:
-        return im
+        return (0,im,'')
 
 def combine_pdf(img_paths:List[str],output_filename:str,output_dir:str,fullpath:str,UUID:str):
     global TARGETDIR,EXISTED_PATH,OUTPUTDIR,FAILED
@@ -36,7 +39,10 @@ def combine_pdf(img_paths:List[str],output_filename:str,output_dir:str,fullpath:
     '''
     pdf_merger = PyPDF2.PdfMerger()
     for (index, img_path) in enumerate(img_paths):
-        image = remove_transparency(Image.open(img_path))
+        (is_origin_image,image,new_file_name) = remove_transparency(Image.open(img_path))
+        if is_origin_image != 0:
+            image.close()
+            image = Image.open(new_file_name)
         #Invalid rotate value will be judged 
         rotated = False
         img_exif = image.getexif()
@@ -60,6 +66,8 @@ def combine_pdf(img_paths:List[str],output_filename:str,output_dir:str,fullpath:
             print(err)
         image.close()
         file.close()
+        if is_origin_image != 0 and os.path.exists(new_file_name):
+            os.remove(new_file_name)
         if os.path.exists(img_path):
             os.remove(img_path)
     destination:List[str] = fullpath.replace(f"./{TARGETDIR}","").split("\\")
@@ -69,11 +77,10 @@ def combine_pdf(img_paths:List[str],output_filename:str,output_dir:str,fullpath:
         if os.path.exists("./"+OUTPUTDIR+"/"+zipfilename) is False:
             os.makedirs("./"+OUTPUTDIR+"/"+zipfilename)
         path = "./"+OUTPUTDIR+"/"+zipfilename+"/"+output_filename+"$$"+(uuid.uuid4()).__str__().replace("-","",-1)+".pdf"
-        print(path)
     #To ensure that name is unique. The name will be edited to origin name if it is possible in `rename()`
     else:
         path = "./"+output_dir+"/"+output_filename+"$$"+(uuid.uuid4()).__str__().replace("-","",-1)+".pdf"
-    print("combine to pdf:",path)
+    # print("combine to pdf:",path)
     pdf_merger.write(path)
     pdf_merger.close()
 
@@ -123,7 +130,7 @@ def _extract(base_dir,iter):
     for file in files:
         file_path = os.path.join(root, file)
         if file.endswith('.zip') or file.endswith('.cbz') or file.endswith('.rar'):
-            print("extracting:",file_path)
+            # print("extracting:",file_path)
             files_names:List[str] = file.split(".")
             if files_names.__len__()<=2:
                 path = f"./{TARGETDIR}/"+file.split(".")[0].replace(".","")
@@ -157,8 +164,9 @@ def extract_recursive(base_dir):
             for f in item[2]:
                 if f.endswith(".cbz") or f.endswith(".zip") or f.endswith(".rar"):
                     targets.append((item[0],item[1],[f]))
+    print('extracting zipped files: ', targets.__len__())
     with Pool() as pool:
-        results = pool.map(partial(_extract,base_dir),targets)
+        results = list(tqdm(pool.imap(partial(_extract,base_dir),targets),total=targets.__len__()))
         pool.close() 
         pool.join()
 
@@ -257,11 +265,14 @@ def copy_pictures(base_dir):
 def copy_file_to_target(suffix,base_dir):
     images = get_file_name(base_dir,[suffix],False)
     copied = []
-    for item in images[1]:
+    if images[1].__len__()==0:
+        return 0
+    print("copying: ",suffix)
+    for item in tqdm(images[1]):
         # print(item)
         if item.split("\\")[-2] not in copied:
             shutil.copytree("\\".join(item.split("\\")[:-1]),f"./{TARGETDIR}/"+item.split("\\")[-2],dirs_exist_ok=True)
-            print(f"copy {suffix} to target:",item.split("\\")[-2])
+            # print(f"copy {suffix} to target:",item.split("\\")[-2])
             copied.append(item.split("\\")[-2])
 
 def copy_file_to_output(suffix,base_dir):
@@ -274,13 +285,13 @@ def copy_file_to_output(suffix,base_dir):
 
 def _combine(item):
     global OUTPUTDIR
-    print("combining books to pdf:",item.get("name"))
+    # print("combining books to pdf:",item.get("name"))
     _ID = uuid.uuid4()
     try:
         images = get_file_name(item.get("path"),item.get("suffix"),True)
         combine_pdf(images[1],item.get("name"),OUTPUTDIR,item.get("path"),_ID)
         # shutil.rmtree(item.get("path"))
-        print("removed extracted files: ",item.get("path"))
+        # print("removed extracted files: ",item.get("path"))
     except Exception as e:
         err = f"error while combing:{item.get('name')} because {e}"
         print(err)
@@ -289,8 +300,9 @@ def _combine(item):
 
 def combine():
     global BOOKS,OUTPUTDIR,FAILED
+    print('combining images to PDF: ', BOOKS.__len__())
     with Pool() as pool:
-        results = pool.map(_combine,BOOKS)
+        results = list(tqdm(pool.imap(_combine,BOOKS),total=BOOKS.__len__()))
         pool.close()  # No more tasks can be submitted
         pool.join()   
         
@@ -309,7 +321,7 @@ def rename():
                 break
         if os.path.exists(target_name)==False:
             shutil.move(item,target_name)
-            print("rename:",item,target_name)
+            # print("rename:",item,target_name)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
